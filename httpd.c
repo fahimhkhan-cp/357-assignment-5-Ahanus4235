@@ -34,7 +34,7 @@ void error_response(char error[],int nfd){
 
    char ct[]="Content-Type: text/html\r\n";
    write(nfd,ct,strlen(ct));
-   char s[]="<!DOCTYPE html><head><title>Error</title></head><body><h1>Error</h1></body></html>";
+   char s[]="<!DOCTYPE html><head><title>Error</title></head><body><h1>Error</h1></body></html>\r\n";
    write(nfd,s,strlen(s));
 }
 
@@ -43,11 +43,11 @@ void handle_request(int nfd)
    FILE *network = fdopen(nfd, "r+");
    if (network == NULL)
    {
-      printf("fdopen error\n");
+      error_response(internal_error,nfd);
       close(nfd);
-      return;
+      exit(1);
    }
-
+   printf("handling request\n");
    char *line = NULL;
    size_t hlen=0;
    ssize_t read;
@@ -57,7 +57,7 @@ void handle_request(int nfd)
    //Getting the html request
    read=getline(&line,&hlen,network);
    printf("%s\n",line);
-
+   printf("past this point");
    //Should contain either GET or HEAD
    method=strtok(line," ");
    printf("%s\n",method);
@@ -82,7 +82,13 @@ void handle_request(int nfd)
       error_response(bad_request,nfd);
       exit(1);
    }
-   
+
+   //Making sure method is either HEAD or GET
+   if (strcmp(method,"HEAD")!=0 && strcmp(method,"GET")!=0){
+      error_response(not_implemented,nfd);
+      exit(1);
+   }
+
    //Creating the HTML header
    //And opening desired file
    char* directory="cgi-like";
@@ -111,8 +117,10 @@ void handle_request(int nfd)
 
    //The actual file contents
    //SHOULD ONLY WORK WITH A 'HEAD' REQUEST
-   while((read=getline(&line,&hlen,fp))!=-1){
-      write(nfd,line,read);
+   if(strcmp(method,"GET")==0){
+      while((read=getline(&line,&hlen,fp))!=-1){
+         write(nfd,line,read);
+      }
    }
    fclose(fp);
    
