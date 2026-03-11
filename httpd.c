@@ -47,17 +47,19 @@ void handle_request(int nfd)
       close(nfd);
       exit(1);
    }
-   printf("handling request\n");
    char *line = NULL;
    size_t hlen=0;
    ssize_t read;
    char* method;
    char* filename;
    char* req3;
+
+
    //Getting the html request
+   printf("reached right here\n");
    read=getline(&line,&hlen,network);
    printf("%s\n",line);
-   printf("past this point");
+
    //Should contain either GET or HEAD
    method=strtok(line," ");
    printf("%s\n",method);
@@ -123,8 +125,6 @@ void handle_request(int nfd)
       }
    }
    fclose(fp);
-   
-   
    free(line);
    fclose(network);
 }
