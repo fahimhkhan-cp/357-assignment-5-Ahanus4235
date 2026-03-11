@@ -8,16 +8,15 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <string.h>
+#include <fcntl.h>
 
 char bad_request[] = "HTTP/1.0 400 Bad Request\r\n";
-
 char permission_denied[] = "HTTP/1.0 403 Permission Denied\r\n";
-
 char not_found[] ="HTTP/1.0 404 Not Found\r\n";
-
 char internal_error[]="HTTP/1.0 500 Internal Error\r\n";
-
 char not_implemented[] = "HTTP/1.0 501 Not Implemented\r\n";
+
+#define MAX_SUB_ARGS 16
 
 void sigchild_handler(int signo){
    while(1){
@@ -65,7 +64,7 @@ void handle_request(int nfd)
    printf("%s\n",method);
    if (method==NULL){
       error_response(bad_request,nfd);
-      exit(1);
+      return;
    }
 
    //Should be an html filename
@@ -73,7 +72,7 @@ void handle_request(int nfd)
    printf("%s\n",filename);
    if (filename==NULL){
       error_response(bad_request,nfd);
-      exit(1);
+      return;
    }
 
    //We also want to make sure the third part of the request is there,
@@ -82,33 +81,110 @@ void handle_request(int nfd)
    printf("%s\n",req3);
    if (req3==NULL){
       error_response(bad_request,nfd);
-      exit(1);
+      return;
    }
 
    //Making sure method is either HEAD or GET
    if (strcmp(method,"HEAD")!=0 && strcmp(method,"GET")!=0){
       error_response(not_implemented,nfd);
-      exit(1);
+      return;
    }
 
    //Creating the HTML header
    //And opening desired file
-   char* directory="cgi-like";
-   char pathname[128];
-   snprintf(pathname,sizeof(pathname),"%s%s",directory,filename);
-   printf("%s\n",pathname);
+   //removing the / from the begginning 
+   memmove(filename,filename+1,strlen(filename));
 
-   FILE *fp=fopen(pathname,"r");
+   //Checking for a ? and splitting the string, in the case
+   //a cgi command is ran with arguments
+   filename=strtok(filename,"?");
+
+   //if args are present
+   char* args=strtok(NULL,"?");
+
+   FILE *fp=fopen(filename,"r");
    if(fp==NULL){
       printf("file open error\n");
       error_response(not_found,nfd);
-      exit(1);
+      fclose(fp);
+      return;
+   }
+
+   //Checking if the request was for a cgi-like command
+   char* temp;
+   temp=strtok(filename,"/");
+
+   if (strcmp(temp,"cgi-like")==0){
+      //we need to open/create a new file, exec
+      //and write the commands output to that file,
+      //then use that file for the remainder of the program
+      printf("cgi-like command: True\n");
+
+      char* command=strtok(NULL,"/");
+      printf("command: %s\n",command);
+      printf("args: %s\n",args);
+
+      //now args need to be split into an actual list
+      char* argList[MAX_SUB_ARGS];
+      char* token=strtok(args,"&");
+      int count=1;
+      argList[0]=command;
+
+      while (token!=NULL){
+         argList[count]=token;
+         token=strtok(NULL,"&");
+         count+=1;
+      }
+      argList[count]=NULL;
+
+      //forking a process to make the temp file
+      //and then exec with output directed to said file
+      printf("about to open output.txt\n");
+      int subfd=open("output.txt", O_WRONLY|O_CREAT|O_TRUNC,0644);
+      if (subfd<0){
+         printf("subfd open error\n");
+         exit(1);
+      }
+      printf("opened output.txt\n");
+      pid_t subpid=fork();
+
+      printf("successful fork for exec\n");
+      if (subpid<0){
+         printf("fork error\n");
+         close(subfd);
+         return;
+      }
+      else if (subpid==0){
+         //child
+         if (dup2(subfd,STDOUT_FILENO)<0){
+            printf("dup2 error\n");
+            close(subfd);
+            exit(1);
+         }
+         close(subfd);
+         execvp(argList[0],argList);
+
+         printf("execvp error\n");
+         exit(1);
+      }
+      else{
+         //parent
+         int status;
+         printf("waiting\n");
+         waitpid(subpid,&status,0);
+         printf("waited\n");
+         //After waiting, close the previsouly open file in the parent
+         //Then open the output to display the exec program contents
+         fclose(fp);
+         filename="output.txt";
+         fp=fopen(filename,"r");
+      }
    }
 
    char buffer[1024];
    ssize_t len=0;
    struct stat fileStat;
-   stat(pathname,&fileStat);
+   stat(filename,&fileStat);
 
    len+=snprintf(buffer+len,sizeof(buffer)-len,"HTTP/1.0 200 OK\r\n");
    len+=snprintf(buffer+len,sizeof(buffer)-len,"Content-Type: text/html\r\n");
@@ -124,6 +200,9 @@ void handle_request(int nfd)
          write(nfd,line,read);
       }
    }
+
+   //Needs to wait to close the socket and exit until client
+   //exits the window. Maybe a signal?
    fclose(fp);
    free(line);
    fclose(network);
@@ -152,6 +231,7 @@ void run_service(int fd)
 
          if (pid<0){
             printf("fork error\n");
+            close(nfd);
             exit(1);
          }
          else if (pid==0){
@@ -160,7 +240,7 @@ void run_service(int fd)
             handle_request(nfd);
             printf("Connection closed\n");
 
-            //child closes fd and exits after handling request
+            //child closes nfd and exits after handling request
             close(nfd);
             exit(0);
          }
