@@ -55,7 +55,6 @@ void handle_request(int nfd)
 
 
    //Getting the html request
-   printf("reached right here\n");
    read=getline(&line,&hlen,network);
    printf("%s\n",line);
 
@@ -67,7 +66,7 @@ void handle_request(int nfd)
       return;
    }
 
-   //Should be an html filename
+   //Should be an html filename or a command for the cgi-like directory
    filename=strtok(NULL," ");
    printf("%s\n",filename);
    if (filename==NULL){
@@ -83,6 +82,23 @@ void handle_request(int nfd)
       error_response(bad_request,nfd);
       return;
    }
+
+   // We also need to test whether or not and .. are present in the path given
+   // If so, permission denied
+   char* testfilename=(char*)malloc(sizeof(char)*strlen(filename));
+   strcpy(testfilename,filename);
+   char* branch=strtok(testfilename,"/");
+   printf("branch: %s",branch);
+   while (branch!=NULL){
+      if (strcmp(branch,"..")==0){
+         error_response(permission_denied,nfd);
+         exit(1);
+      }
+      printf("in while loop: %s\n",branch);
+      sleep(1);
+      branch=strtok(NULL,"/");
+   }
+   printf("This shoudlnt print if user has .. in request.\n");
 
    //Making sure method is either HEAD or GET
    if (strcmp(method,"HEAD")!=0 && strcmp(method,"GET")!=0){
@@ -130,6 +146,7 @@ void handle_request(int nfd)
       int count=1;
       argList[0]=command;
 
+      
       while (token!=NULL){
          argList[count]=token;
          token=strtok(NULL,"&");
@@ -145,10 +162,9 @@ void handle_request(int nfd)
          printf("subfd open error\n");
          exit(1);
       }
-      printf("opened output.txt\n");
+
       pid_t subpid=fork();
 
-      printf("successful fork for exec\n");
       if (subpid<0){
          printf("fork error\n");
          close(subfd);
@@ -170,9 +186,7 @@ void handle_request(int nfd)
       else{
          //parent
          int status;
-         printf("waiting\n");
          waitpid(subpid,&status,0);
-         printf("waited\n");
          //After waiting, close the previsouly open file in the parent
          //Then open the output to display the exec program contents
          fclose(fp);
