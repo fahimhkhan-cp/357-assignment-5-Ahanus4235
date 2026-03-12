@@ -15,6 +15,11 @@ char permission_denied[] = "HTTP/1.0 403 Permission Denied\r\n";
 char not_found[] ="HTTP/1.0 404 Not Found\r\n";
 char internal_error[]="HTTP/1.0 500 Internal Error\r\n";
 char not_implemented[] = "HTTP/1.0 501 Not Implemented\r\n";
+char br_msg[]="Bad Request\n";
+char pd_msg[]="Permission Denied\n";
+char nf_msg[]="Not Found\n";
+char ie_msg[]="Internal Error\n";
+char ni_msg[]="Not Implemented\n";
 
 #define MAX_SUB_ARGS 16
 
@@ -28,13 +33,13 @@ void sigchild_handler(int signo){
    }
 }
 
-void error_response(char error[],int nfd){
-   write(nfd,error,strlen(error));
-
-   char ct[]="Content-Type: text/html\r\n";
-   write(nfd,ct,strlen(ct));
-   char s[]="<!DOCTYPE html><head><title>Error</title></head><body><h1>Error</h1></body></html>\r\n";
-   write(nfd,s,strlen(s));
+void error_response(char error[], char msg[], int nfd){
+   char buffer[128];
+   int len=0;
+   len+=snprintf(buffer+len,sizeof(buffer)-len,"%s",error);
+   len+=snprintf(buffer+len,sizeof(buffer)-len,"Content-Type: text/html\r\n");
+   len+=snprintf(buffer+len,sizeof(buffer)-len,"%s",msg);
+   write(nfd,buffer,len);
 }
 
 void handle_request(int nfd)
@@ -42,7 +47,7 @@ void handle_request(int nfd)
    FILE *network = fdopen(nfd, "r+");
    if (network == NULL)
    {
-      error_response(internal_error,nfd);
+      error_response(internal_error,ie_msg,nfd);
       close(nfd);
       exit(1);
    }
@@ -56,30 +61,26 @@ void handle_request(int nfd)
 
    //Getting the html request
    read=getline(&line,&hlen,network);
-   printf("%s\n",line);
 
    //Should contain either GET or HEAD
    method=strtok(line," ");
-   printf("%s\n",method);
    if (method==NULL){
-      error_response(bad_request,nfd);
+      error_response(bad_request,br_msg,nfd);
       return;
    }
 
    //Should be an html filename or a command for the cgi-like directory
    filename=strtok(NULL," ");
-   printf("%s\n",filename);
    if (filename==NULL){
-      error_response(bad_request,nfd);
+      error_response(bad_request,br_msg,nfd);
       return;
    }
 
    //We also want to make sure the third part of the request is there,
    //even though we wont use it
    req3=strtok(NULL," ");
-   printf("%s\n",req3);
    if (req3==NULL){
-      error_response(bad_request,nfd);
+      error_response(bad_request,br_msg,nfd);
       return;
    }
 
@@ -88,21 +89,18 @@ void handle_request(int nfd)
    char* testfilename=(char*)malloc(sizeof(char)*strlen(filename));
    strcpy(testfilename,filename);
    char* branch=strtok(testfilename,"/");
-   printf("branch: %s",branch);
+
    while (branch!=NULL){
       if (strcmp(branch,"..")==0){
-         error_response(permission_denied,nfd);
+         error_response(permission_denied,pd_msg,nfd);
          exit(1);
       }
-      printf("in while loop: %s\n",branch);
-      sleep(1);
       branch=strtok(NULL,"/");
    }
-   printf("This shoudlnt print if user has .. in request.\n");
-
+   free(testfilename);
    //Making sure method is either HEAD or GET
    if (strcmp(method,"HEAD")!=0 && strcmp(method,"GET")!=0){
-      error_response(not_implemented,nfd);
+      error_response(not_implemented,ni_msg,nfd);
       return;
    }
 
@@ -120,8 +118,7 @@ void handle_request(int nfd)
 
    FILE *fp=fopen(filename,"r");
    if(fp==NULL){
-      printf("file open error\n");
-      error_response(not_found,nfd);
+      error_response(not_found,nf_msg,nfd);
       fclose(fp);
       return;
    }
@@ -134,11 +131,7 @@ void handle_request(int nfd)
       //we need to open/create a new file, exec
       //and write the commands output to that file,
       //then use that file for the remainder of the program
-      printf("cgi-like command: True\n");
-
       char* command=strtok(NULL,"/");
-      printf("command: %s\n",command);
-      printf("args: %s\n",args);
 
       //now args need to be split into an actual list
       char* argList[MAX_SUB_ARGS];
@@ -156,31 +149,28 @@ void handle_request(int nfd)
 
       //forking a process to make the temp file
       //and then exec with output directed to said file
-      printf("about to open output.txt\n");
       int subfd=open("output.txt", O_WRONLY|O_CREAT|O_TRUNC,0644);
       if (subfd<0){
-         printf("subfd open error\n");
+         error_response(internal_error,ie_msg,nfd);
          exit(1);
       }
-
       pid_t subpid=fork();
-
       if (subpid<0){
-         printf("fork error\n");
+         error_response(internal_error,ie_msg,nfd);
          close(subfd);
          return;
       }
       else if (subpid==0){
          //child
          if (dup2(subfd,STDOUT_FILENO)<0){
-            printf("dup2 error\n");
+            error_response(internal_error,ie_msg,nfd);
             close(subfd);
             exit(1);
          }
          close(subfd);
          execvp(argList[0],argList);
 
-         printf("execvp error\n");
+         error_response(internal_error,ie_msg,nfd);
          exit(1);
       }
       else{
@@ -220,6 +210,11 @@ void handle_request(int nfd)
    fclose(fp);
    free(line);
    fclose(network);
+
+   //If opened file is output.txt, delete it
+   if (strcmp(filename,"output.txt")==0){
+      remove(filename);
+   }
 }
 
 void run_service(int fd)
