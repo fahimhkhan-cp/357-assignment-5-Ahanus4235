@@ -241,7 +241,6 @@ void run_service(int fd)
          if (pid<0){
             printf("fork error\n");
             close(nfd);
-            exit(1);
          }
          else if (pid==0){
             //child 
@@ -275,8 +274,8 @@ int main(int argc, char* argv[])
    }
    portNum=strtol(argv[1],&endptr,10);
 
-   if (*endptr!='\0'){
-      printf("invalid port number\n");
+   if (*endptr!='\0' || !(portNum>=1024 && portNum<=65535)){
+      printf("invalid port number (Must be in range 1024-65535)\n");
       exit(1);
    }
 
